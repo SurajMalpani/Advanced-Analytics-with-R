@@ -1,0 +1,127 @@
+---
+title: "Cross Validation and Bootstrapping"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  word_document: default
+  pdf_document: default
+---
+```{r echo=TRUE, warning=FALSE}
+rqrd_Pkg = c('broom','data.table','tidyverse','MASS')
+for(p in rqrd_Pkg){
+  if(!require(p,character.only = TRUE)) 
+  install.packages(p);
+  library(p,character.only = TRUE)
+}
+options(scipen=10)
+
+summary_stats <-  function(x){
+  df <- data.table(mean = mean(x), sd = sd(x),
+                    param_low = (mean(x) - 1.96*sd(x)),
+                    param_high = (mean(x) + 1.96*sd(x)),
+                    lower_non = quantile(x, probs=seq(0,1,0.025))["2.5%"],
+                   upper_non = quantile(x, probs=seq(0,1,0.025))["97.5%"])
+ return(df)
+ }
+```
+
+## Cross Validation:
+Cross validation is mainly used for improving the predictive models.
+
+Data structure & Baseline Model:
+```{r Cross_Validation, echo=TRUE}
+data(Boston)
+raw    <- Boston[complete.cases(Boston),]
+nr     <- nrow(raw)   
+str(raw)
+seed   <- 87264
+set.seed(seed)
+
+
+#Model 1 -- Baseline 
+m1     <- lm(medv~.,raw)
+summary(m1)
+r1     <- raw$medv-m1$fitted.values
+summary_stats(r1)
+
+```
+
+#### Simple CV:
+
+In Simple Cross Validation, we use one training sample and one testing sample. The testing sample is used to 
+```{r echo=TRUE}
+
+set.seed(seed)
+i2     <- sample(nr, ceiling(0.1*nr)) #create a sample
+m2     <- lm(medv~.,raw[-i2,])
+summary(m2)
+r2     <- raw$medv[i2]-predict(m2,raw[i2,])
+summary_stats(r2)
+```
+
+#### JK LOOCV (Jack Knife)
+
+This method, also known as Leave-one-out Cross validation (LOOCV) 
+```{r echo=TRUE}
+f      <- function(i) {
+  m <- lm(medv~.,raw[-i,])
+  p <- predict(m,raw[i,])
+  return(data.table(i=i,diff=raw$medv[i]-p))
+}
+set.seed(seed)
+i3     <- data.table(i=1:nr,j=1:nr)
+r3     <- i3[,f(i),by=j]
+summary_stats(r3$diff)
+```
+
+#### K-Fold (k=10)
+
+```{r warning=FALSE}
+set.seed(seed)
+i4     <- data.table(i=sample(nr),j=rep(1:10,ceiling(nr/10))[1:nr])
+r4     <- i4[,f(i),by=j]
+summary_stats(r4$diff)
+```
+
+## Bootstrapping
+
+Classic bootstrapping 
+```{r Bootstrapping, echo=TRUE, warning=FALSE}
+seed   <- 45376
+set.seed(seed)
+mdl    <- medv~.
+
+t1     <- data.table(i=rep(1:500,each=nr),
+                     j=as.vector(replicate(500,sample(nr,replace=T),simplify=T)))
+r1     <- t1[,tidy(lm(mdl,raw[j,])),by=i]
+df_r1 <- r1 %>%
+  group_by(term) %>%
+  summarize(count = n(), mean = mean(estimate), sd = sd(estimate),
+            lower_non = quantile(estimate, probs=seq(0,1,0.025))["2.5%"],
+            upper_non = quantile(estimate, probs=seq(0,1,0.025))["97.5%"],
+            lower_par = (mean(estimate) - 1.96*sd(estimate)),
+            upper_par = (mean(estimate) + 1.96*sd(estimate)),
+            pval_count = sum(p.value > 0.05),
+            mse = mean(std.error**2))
+knitr::kable(df_r1, floating.environment='sidewaystable')
+```
+
+Balanced Bootstrapping
+
+```{r}
+set.seed(seed)
+t2     <- data.table(i=sample(rep(1:nr,500)),j=rep(1:500,each=nr))
+r2     <- t2[,tidy(lm(mdl,raw[i,])),by=j]
+df_r2 <- r2 %>%
+  group_by(term) %>%
+  summarize(count = n(), mean = mean(estimate), sd = sd(estimate),
+            lower_non = quantile(estimate, probs=seq(0,1,0.025))["2.5%"],
+            upper_non = quantile(estimate, probs=seq(0,1,0.025))["97.5%"],
+            lower_par = (mean(estimate) - 1.96*sd(estimate)),
+            upper_par = (mean(estimate) + 1.96*sd(estimate)),
+            pval_count = sum(p.value > 0.05),
+            mse = mean(std.error**2))
+knitr::kable(df_r2, floating.environment='sidewaystable')
+```
+
